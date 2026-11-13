@@ -1,0 +1,28 @@
+# Netlify configuration for Beam
+# Deploy the whole folder. index.html is served at the root;
+# the function is reachable at /api/turn.
+
+[build]
+  publish = "."
+  functions = "functions"
+
+# BEAM_ACCESS_TOKEN intentionally appears in js/config.js (the page sends it; it is
+# a speed bump for scripts, not a secret). Tell the secrets scanner this one
+# value is expected. NOTE: only this key is omitted — METERED_SECRET_KEY and any
+# other secret are still scanned, so a real accidental leak is still caught.
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "BEAM_ACCESS_TOKEN"
+
+[[redirects]]
+  from = "/api/turn"
+  to = "/.netlify/functions/turn-credentials"
+  status = 200
+[[redirects]]
+  from = "/api/turn-drop"
+  to = "/.netlify/functions/turn-drop"
+  status = 200
+
+[[redirects]]
+  from = "/drop"
+  to = "/drop.html"
+  status = 200

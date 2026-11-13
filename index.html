@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Beam — direct device-to-device file transfer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2322D3EE'/%3E%3Cstop offset='.5' stop-color='%238B5CF6'/%3E%3Cstop offset='1' stop-color='%23E879F9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='%230B0E1A'/%3E%3Crect x='6' y='6' width='20' height='20' rx='5' fill='url(%23g)'/%3E%3Crect x='11' y='11' width='10' height='10' rx='2.5' fill='%230B0E1A'/%3E%3Crect x='13.5' y='15' width='5' height='2' rx='1' fill='url(%23g)'/%3E%3C/svg%3E">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Beam">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU" crossorigin="anonymous"></script>
+<script src="/js/qr-save-pair.js"></script>
+<!-- Byte-mode QR encoder for optical (screen-to-camera) transfer. Loaded after
+     qrcodejs, which also exports a global named QRCode — the two are swapped
+     back into their own names right below so neither clobbers the other. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js" integrity="sha384-HGmnkDZJy7mRkoARekrrj0VjEFSh9a0Z8qxGri/kTTAJkgR8hqD1lHsYSh3JdzRi" crossorigin="anonymous"></script>
+<script src="/js/qr-restore-pair.js"></script>
+
+<script src="/js/config.js"></script>
+
+<style>
+  /* Apple-style system: system font, light/dark adaptive colors, translucent chrome,
+     instant press feedback, restrained motion (see .claude/skills/apple-design). */
+  :root{
+    /* Dark only (the user prefers it): Apple dark system colors. */
+    --bg:#000000;--surface:#1C1C1E;--surface-2:#2C2C2E;--fill:rgba(120,120,128,.24);
+    --line:rgba(255,255,255,.1);--line-strong:rgba(255,255,255,.2);
+    --text:#F5F5F7;--muted:#98989D;
+    --accent:#0A84FF;--accent-tint:rgba(10,132,255,.18);
+    --success:#30D158;--success-fill:#30D158;--warn:#FF9F0A;--warn-fill:#FF9F0A;--danger:#FF453A;
+    --material:rgba(22,22,24,.72);
+    --shadow:none;
+    color-scheme:dark;
+    --on-accent:#fff;
+    /* pairing block colors (identity only: shape is what users match) */
+    --blk-circle:#32ADE6;--blk-triangle:#5E5CE6;--blk-square:#FF375F;--blk-star:#FFCC00;
+    --radius:22px;--radius-sm:14px;
+    --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",system-ui,sans-serif;
+    --font-display:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI Variable Display","Segoe UI",Roboto,"Helvetica Neue",system-ui,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  
+  *{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:100%;line-height:1.47;
+    -webkit-font-smoothing:antialiased;min-height:100%;}
+  body{padding:0 0 calc(48px + env(safe-area-inset-bottom));}
+  .wrap{max-width:720px;margin:0 auto;padding:0 16px;}
+  main.wrap{padding-top:20px;}
+
+  /* ---- translucent nav bar: content scrolls underneath ---- */
+  header.top{position:sticky;top:0;z-index:20;background:var(--material);
+    -webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
+    border-bottom:.5px solid var(--line);padding-top:env(safe-area-inset-top);}
+  header.top .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:56px;}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0;}
+  /* the original Beam mark, kept as-is in both themes */
+  .logo{--beam:linear-gradient(90deg,#22D3EE,#8B5CF6,#E879F9);width:32px;height:32px;border-radius:9px;background:var(--beam);
+    position:relative;flex:none;box-shadow:0 0 18px rgba(139,92,246,.4);}
+  .logo::after{content:"";position:absolute;inset:6px;border-radius:5px;background:#0B0E1A;}
+  .logo::before{content:"";position:absolute;left:50%;top:50%;width:13px;height:2px;border-radius:2px;background:var(--beam);transform:translate(-50%,-50%);z-index:2;}
+  .brand h1{font-family:var(--font-display);font-size:1.0625rem;font-weight:600;letter-spacing:-.01em;margin:0;line-height:1.2;}
+  .brand .sub{font-size:.75rem;color:var(--muted);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .badges{display:flex;gap:6px;flex:none;}
+  .badge{font-size:.75rem;font-weight:500;color:var(--muted);background:var(--fill);border-radius:999px;padding:5px 10px;
+    display:flex;align-items:center;gap:6px;white-space:nowrap;}
+  .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--muted);}
+  .badge.open{color:var(--success);} .badge.open .dot{background:var(--success-fill);}
+  .badge.restricted{color:var(--warn);} .badge.restricted .dot{background:var(--warn-fill);}
+  .badge.checking .dot{background:var(--accent);animation:blink 1.2s ease-in-out infinite;}
+  @keyframes blink{50%{opacity:.35;}}
+  .badge.secure{display:none;}
+  @media (min-width:640px){ .badge.secure{display:flex;} }
+
+  /* ---- connection stage ---- */
+  .stage{background:var(--surface);border-radius:var(--radius);padding:26px 20px 22px;margin-bottom:16px;box-shadow:var(--shadow);}
+  .nodes{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .node{flex:none;width:104px;text-align:center;}
+  .node .glyph{width:72px;height:72px;margin:0 auto 10px;border-radius:20px;background:var(--surface-2);color:var(--muted);
+    display:flex;align-items:center;justify-content:center;transition:background-color .3s ease,color .3s ease;}
+  .node .glyph svg{width:34px;height:34px;}
+  .node.live .glyph{background:var(--accent-tint);color:var(--accent);}
+  .node .label{font-weight:600;font-size:.9375rem;letter-spacing:-.01em;}
+  .node .role{font-size:.8125rem;color:var(--muted);margin-top:1px;min-height:1.2em;}
+  .link{flex:1;height:72px;position:relative;margin-top:-34px;}
+  .link svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;}
+  .beamline{stroke:var(--line-strong);stroke-width:2;fill:none;stroke-dasharray:2 6;stroke-linecap:round;transition:stroke .3s ease;}
+  .stage.connected .beamline{stroke:var(--accent);stroke-dasharray:none;}
+  .pulse{r:3.5;fill:var(--on-accent);opacity:0;}
+  .stage.busy .pulse{opacity:1;}
+  .stage.busy .p1{animation:travel 1.4s linear infinite;}
+  .stage.busy .p2{animation:travel 1.4s linear infinite .47s;}
+  .stage.busy .p3{animation:travel 1.4s linear infinite .93s;}
+  @keyframes travel{from{transform:translateX(0)}to{transform:translateX(100%)}}
+  .status{text-align:center;margin-top:14px;font-size:.9375rem;color:var(--muted);line-height:1.4;}
+  .status b{color:var(--text);font-weight:600;font-family:var(--mono);letter-spacing:.02em;}
+  .verify{margin:12px auto 0;width:fit-content;max-width:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
+    font-size:.8125rem;color:var(--muted);background:var(--surface-2);border-radius:12px;padding:8px 14px;text-align:center;}
+  .verify b{font-family:var(--mono);font-size:1.0625rem;font-weight:600;letter-spacing:.06em;color:var(--text);font-variant-numeric:tabular-nums;}
+
+  /* ---- pairing ---- */
+  .grid{display:grid;grid-template-columns:1fr;gap:16px;margin:0 auto 8px;max-width:440px;}
+  #joinCard{display:none;} /* default before JS decides the role; avoids a flash of both cards */
+  body.role-mobile #showCard{display:none;}
+  body.role-mobile #joinCard{display:block;}
+  .roleSwitch{text-align:center;margin-bottom:16px;}
+  .roleSwitch button{background:transparent;color:var(--accent);font-family:var(--font);font-size:.9375rem;font-weight:400;padding:10px 12px;}
+  .card{background:var(--surface);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);}
+  .card .eyebrow{font-size:1.25rem;font-weight:600;letter-spacing:-.015em;line-height:1.2;color:var(--text);margin-bottom:14px;font-family:var(--font-display);}
+  .code{font-family:var(--mono);font-weight:600;font-size:2.25rem;letter-spacing:.14em;line-height:1;color:var(--text);word-break:break-all;}
+  .code-row{display:flex;align-items:center;justify-content:space-between;gap:14px;}
+  #qr{width:104px;height:104px;flex:none;background:#fff;border-radius:12px;padding:7px;display:flex;box-shadow:inset 0 0 0 .5px var(--line);}
+  #qr img,#qr canvas{width:100%!important;height:100%!important;}
+  .hint{font-size:.8125rem;color:var(--muted);margin-top:12px;line-height:1.45;}
+  .field{display:flex;gap:10px;margin-top:4px;}
+  input.codein{flex:1;min-width:0;background:var(--surface-2);border:none;color:var(--text);font-family:var(--mono);font-size:1.375rem;letter-spacing:.2em;
+    padding:12px 14px;border-radius:12px;outline:none;width:100%;transition:box-shadow .15s ease;}
+  input.codein::placeholder{color:var(--muted);opacity:.6;letter-spacing:.1em;}
+  input.codein:focus{box-shadow:0 0 0 4px var(--accent-tint),inset 0 0 0 1px var(--accent);}
+
+  button{font-family:var(--font);font-weight:600;cursor:pointer;border:none;border-radius:12px;
+    -webkit-tap-highlight-color:transparent;transition:transform 100ms ease-out,filter .2s ease,background-color .2s ease;}
+  button:active{transform:scale(.97);}
+  button:focus-visible{outline:3px solid var(--accent-tint);outline-offset:2px;box-shadow:0 0 0 1px var(--accent);}
+  .btn-primary{background:var(--accent);color:var(--on-accent);font-size:1.0625rem;padding:13px 20px;letter-spacing:-.01em;}
+  .btn-primary:hover{filter:brightness(1.06);}
+  .btn-primary:active{filter:brightness(.92);}
+  .btn-ghost{background:var(--fill);color:var(--accent);padding:10px 16px;font-size:.9375rem;font-weight:500;}
+
+  .mazeBoard{display:flex;justify-content:center;background:var(--surface-2);border-radius:18px;padding:14px;}
+  .cubeRow{display:flex;gap:10px;justify-content:center;flex-wrap:nowrap;}
+  .cube{width:62px;height:62px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;
+    color:rgba(0,0,0,.72);flex:none;box-shadow:0 1px 1px rgba(0,0,0,.08),0 4px 10px rgba(0,0,0,.1);}
+  #mazeTrace .cube{cursor:grab;transition:transform .3s cubic-bezier(.32,.72,0,1);touch-action:none;user-select:none;-webkit-user-select:none;}
+  #mazeTrace .cube:active{transform:scale(.95);}
+  #mazeTrace .cube.dragging{transition:none;cursor:grabbing;z-index:2;will-change:transform;box-shadow:0 10px 24px rgba(0,0,0,.2);}
+  .mazeCaption{text-align:center;font-size:.8125rem;color:var(--muted);margin-top:12px;line-height:1.45;}
+  .mazeConnectBtn{display:block;margin:14px auto 0;width:100%;}
+  details.fallback{margin-top:14px;border-top:.5px solid var(--line);padding-top:12px;}
+  details.fallback summary{cursor:pointer;font-size:.9375rem;color:var(--accent);list-style:none;display:flex;align-items:center;justify-content:space-between;}
+  details.fallback summary::-webkit-details-marker{display:none;}
+  details.fallback summary::after{content:"";width:7px;height:7px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);
+    transform:rotate(-45deg);transition:transform .25s ease;margin-right:4px;}
+  details.fallback[open] summary::after{transform:rotate(45deg);}
+  details.fallback .body{margin-top:14px;}
+
+  /* ---- incoming-link prompt / mode prompt ---- */
+  .prompt{background:var(--surface);border-radius:18px;padding:16px;margin-bottom:16px;display:none;align-items:center;justify-content:space-between;
+    gap:12px;flex-wrap:wrap;box-shadow:0 0 0 1.5px var(--accent),0 10px 30px rgba(0,0,0,.08);}
+  .prompt.show{display:flex;animation:materialize .32s cubic-bezier(.32,.72,0,1);}
+  @keyframes materialize{from{opacity:0;transform:scale(.97);filter:blur(4px);}to{opacity:1;transform:none;filter:none;}}
+  .prompt span{font-size:.9375rem;font-weight:500;flex:1 1 220px;}
+  .prompt .acts{display:flex;gap:8px;}
+  .prompt .btn-primary{font-size:.9375rem;padding:10px 18px;}
+
+  /* ---- transfer ---- */
+  .drop{background:var(--surface);border:2px dashed var(--line-strong);border-radius:var(--radius);padding:34px 20px;text-align:center;
+    transition:border-color .2s ease,background-color .2s ease,transform 100ms ease-out;cursor:pointer;margin-bottom:16px;}
+  .drop:active{transform:scale(.99);}
+  .drop.hot{border-color:var(--accent);background:var(--accent-tint);}
+  .drop.disabled{opacity:.45;pointer-events:none;}
+  .drop .big{font-weight:600;font-size:1.0625rem;letter-spacing:-.01em;margin:10px 0 2px;}
+  .drop .small{font-size:.8125rem;color:var(--muted);}
+  .drop svg{width:34px;height:34px;color:var(--accent);}
+  .xfers{display:flex;flex-direction:column;gap:10px;}
+  .xfer{background:var(--surface);border-radius:16px;padding:14px 16px;box-shadow:var(--shadow);}
+  .xfer .r1{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:10px;}
+  .xfer .nm{font-weight:600;font-size:.9375rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .xfer .dir{font-size:.75rem;color:var(--muted);flex:none;}
+  .xfer .meta{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;flex:none;}
+  .bar{height:4px;border-radius:4px;background:var(--fill);overflow:hidden;}
+  .bar > i{display:block;height:100%;width:0;background:var(--accent);border-radius:4px;transition:width .15s linear;}
+  .xfer.done .bar > i{background:var(--success-fill);}
+  .xfer.paused .bar > i{background:var(--warn-fill);}
+  .xfer.paused .pct{color:var(--warn);}
+  .xfer a.save{display:inline-flex;margin-top:12px;font-size:.9375rem;font-weight:500;color:var(--accent);text-decoration:none;background:var(--fill);
+    padding:8px 14px;border-radius:10px;transition:transform 100ms ease-out;}
+  .xfer a.save:active{transform:scale(.97);}
+
+  .opticalPanel{background:var(--surface);border-radius:var(--radius);padding:20px;margin-bottom:16px;text-align:center;box-shadow:var(--shadow);}
+  .opticalPanel .beacon{margin:0 auto;width:min(300px,80vw);aspect-ratio:1;background:#fff;border-radius:16px;display:flex;align-items:center;
+    justify-content:center;overflow:hidden;box-shadow:0 0 0 .5px var(--line),0 12px 40px rgba(0,0,0,.12);}
+  .opticalPanel .beacon canvas{width:100%!important;height:100%!important;image-rendering:pixelated;}
+  .opticalPanel .scanwrap{position:relative;max-width:340px;margin:0 auto;}
+  .opticalPanel video{width:100%;border-radius:16px;background:#000;display:block;aspect-ratio:3/4;object-fit:cover;}
+  .opticalPanel .reticle{position:absolute;inset:14%;border:2px solid rgba(255,255,255,.6);border-radius:18px;pointer-events:none;}
+  .opticalPanel .reticle::before{content:"";position:absolute;left:8%;right:8%;height:2px;top:0;background:rgba(255,255,255,.85);border-radius:2px;animation:opscan 2.4s ease-in-out infinite;}
+  @keyframes opscan{0%{top:0;}50%{top:calc(100% - 2px);}100%{top:0;}}
+  .opticalPanel .opLive{display:inline-flex;align-items:center;gap:7px;font-size:.8125rem;color:var(--accent);}
+  .opticalPanel .opLive i{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:oppulse 1.4s ease-in-out infinite;}
+  @keyframes oppulse{50%{opacity:.35;}}
+  .opMeta{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 16px;margin-top:14px;font-size:.8125rem;color:var(--muted);font-variant-numeric:tabular-nums;}
+  .opMeta b{color:var(--text);font-weight:600;}
+  .opticalPanel .bar{max-width:340px;margin:14px auto 0;}
+  .opticalPanel .btn-ghost{margin-top:14px;}
+
+  /* ---- network & relay (grouped settings) ---- */
+  .net{background:var(--surface);border-radius:var(--radius);margin:16px 0;overflow:hidden;box-shadow:var(--shadow);}
+  .net summary{cursor:pointer;padding:16px 20px;font-weight:600;font-size:1.0625rem;letter-spacing:-.01em;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .net summary::-webkit-details-marker{display:none;}
+  .net summary .chev{display:inline-block;color:var(--muted);font-size:.8125rem;margin-left:4px;transition:transform .25s ease;}
+  .net[open] summary .chev{transform:rotate(90deg);}
+  .net summary .tag{font-weight:500;font-size:.75rem;color:var(--muted);background:var(--fill);border-radius:999px;padding:4px 10px;}
+  .net summary .tag.restricted{color:var(--warn);}
+  .net summary .tag.open{color:var(--success);}
+  .net .body{padding:0 20px 20px;display:grid;gap:18px;}
+  .netline{font-size:.9375rem;line-height:1.6;}
+  .netline .k{color:var(--muted);}
+  .seg{display:flex;gap:2px;background:var(--fill);border-radius:10px;padding:2px;}
+  .seg button{flex:1;background:transparent;color:var(--text);font-size:.8125rem;font-weight:500;padding:7px 8px;border-radius:8px;}
+  .seg button:active{transform:none;opacity:.6;}
+  .seg button.on{background:var(--surface);font-weight:600;box-shadow:0 3px 8px rgba(0,0,0,.12),0 3px 1px rgba(0,0,0,.04);}
+  .seg button.on{background:#636366;}
+  .seglabel{font-size:.8125rem;color:var(--muted);margin-bottom:8px;}
+  .diag{border-radius:14px;padding:14px;background:var(--surface-2);}
+  .diag .title{font-weight:600;font-size:.9375rem;margin-bottom:4px;}
+  .diag .cands{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;}
+  .cand{font-family:var(--mono);font-size:.75rem;background:var(--fill);border-radius:8px;padding:5px 9px;color:var(--muted);}
+  .cand.srflx{color:var(--accent);}
+  .cand.relay{color:var(--success);}
+  .verdict{font-size:.875rem;line-height:1.5;}
+  .verdict.ok{color:var(--success);}.verdict.warn{color:var(--warn);}.verdict.bad{color:var(--danger);}
+
+  footer{margin:24px auto 0;max-width:560px;font-size:.75rem;color:var(--muted);line-height:1.6;text-align:center;}
+  footer b{color:var(--text);font-weight:600;}
+  .hidden{display:none!important;}
+  .btn-ghost.wide,.btn-primary.wide{display:flex;width:100%;justify-content:center;align-items:center;gap:8px;margin-top:14px;}
+  .qrHero{display:flex;justify-content:center;}
+  .qrHero #qr{width:232px;height:232px;padding:12px;border-radius:20px;background:#fff;box-shadow:0 0 0 1px var(--line),0 12px 40px rgba(10,132,255,.18);}
+  .shortcode{font-family:var(--mono);letter-spacing:.12em;color:var(--text);}
+  .scanBtn{margin-top:0;font-size:1.0625rem;padding:15px 20px;}
+  .scanBtn svg{width:22px;height:22px;}
+  .scanBox{position:relative;margin:0 auto;max-width:340px;}
+  .scanBox video{width:100%;aspect-ratio:1;object-fit:cover;border-radius:18px;background:#000;display:block;}
+  .scanBox .reticle{position:absolute;inset:16%;border:2px solid rgba(255,255,255,.75);border-radius:18px;pointer-events:none;}
+  .modeSwitch{margin-left:10px;padding:6px 12px;font-size:.8125rem;}
+
+  @media (max-width:420px){
+    .node{width:88px;}
+    .node .glyph{width:64px;height:64px;border-radius:18px;}
+    .link{height:64px;margin-top:-30px;}
+    .cube{width:58px;height:58px;border-radius:15px;}
+  }
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important;}}
+  @media (prefers-reduced-transparency: reduce){ header.top{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none;} }
+  @media (prefers-contrast: more){ .card,.stage,.net,.xfer,.drop,.prompt{box-shadow:0 0 0 1px var(--line-strong);} :root{--muted:var(--text);} }
+</style>
+</head>
+<body>
+  <header class="top"><div class="wrap">
+    <div class="brand">
+      <div class="logo"></div>
+      <div><h1>Beam</h1><div class="sub">Direct · encrypted · no account</div></div>
+    </div>
+    <div class="badges">
+      <div class="badge checking" id="netbadge"><span class="dot"></span><span id="netbadgetxt">checking network…</span></div>
+      <div class="badge secure">🔒 Encrypted</div>
+    </div>
+  </div></header>
+<main class="wrap">
+
+  <section class="stage" id="stage">
+    <div class="nodes">
+      <div class="node live" id="nodeSelf">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="2" width="14" height="20" rx="2.5"/><line x1="10" y1="18.5" x2="14" y2="18.5"/></svg></div>
+        <div class="label">This device</div><div class="role" id="selfRole"></div>
+      </div>
+      <div class="link">
+        <svg viewBox="0 0 300 84" preserveAspectRatio="none">
+          <defs><linearGradient id="bg1" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#22D3EE"/><stop offset=".5" stop-color="#8B5CF6"/><stop offset="1" stop-color="#E879F9"/></linearGradient></defs>
+          <path class="beamline" d="M0 42 H300"/>
+          <circle class="pulse p1" cy="42" cx="0"/><circle class="pulse p2" cy="42" cx="0"/><circle class="pulse p3" cy="42" cx="0"/>
+        </svg>
+      </div>
+      <div class="node" id="nodePeer">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="4" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+        <div class="label">Peer</div><div class="role" id="peerRole">not connected</div>
+      </div>
+    </div>
+    <div class="status" id="status">Setting up a secure link…</div>
+  </section>
+
+  <div class="prompt" id="prompt">
+    <span id="promptText">A device wants to connect.</span>
+    <div class="acts"><button class="btn-primary" id="accept">Accept</button><button class="btn-ghost" id="decline">Decline</button></div>
+  </div>
+
+  <section class="grid" id="pairing">
+    <div class="card" id="showCard">
+      <div class="eyebrow">Scan to connect</div>
+      <div class="qrHero"><div id="qr"></div></div>
+      <div class="mazeCaption">Point your phone's camera — or the <b>Scan</b> button in Beam — at this code. It links straight away; only someone who can see this screen can connect.</div>
+      <button class="btn-ghost wide" id="shareBtn">Copy private link</button>
+      <details class="fallback" id="shortFallback">
+        <summary>Can't scan? Use blocks or a short code</summary>
+        <div class="body">
+          <div class="mazeBoard"><div class="cubeRow" id="mazeShow"></div></div>
+          <div class="mazeCaption">Arrange the blocks in this order on the other device, or type <b class="shortcode" id="myCode">····</b>. You'll be asked to accept.</div>
+        </div>
+      </details>
+    </div>
+    <div class="card" id="joinCard">
+      <div class="eyebrow">Connect to a computer</div>
+      <button class="btn-primary wide scanBtn" id="scanBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3"/><path d="M8 12h8"/></svg>Scan QR code</button>
+      <div class="scanBox hidden" id="scanBox"><video id="pairVideo" playsinline muted autoplay></video><div class="reticle"></div></div>
+      <button class="btn-ghost wide hidden" id="scanCancel">Cancel</button>
+      <div class="mazeCaption" id="scanHint">Point the camera at the QR code on the other screen.</div>
+      <details class="fallback">
+        <summary>Can't scan? Use blocks or a short code</summary>
+        <div class="body">
+          <div class="mazeBoard"><div class="cubeRow" id="mazeTrace"></div></div>
+          <div class="mazeCaption" id="mazeStatus">Watch the other device, then swipe blocks left/right into the same order.</div>
+          <button class="btn-primary mazeConnectBtn" id="mazeConnectBtn">Connect</button>
+          <div class="field" style="margin-top:14px"><input class="codein" id="peerInput" maxlength="4" inputmode="numeric" placeholder="CODE" autocomplete="off" spellcheck="false"><button class="btn-primary" id="connectBtn">Link</button></div>
+        </div>
+      </details>
+    </div>
+  </section>
+  <div class="roleSwitch"><button id="roleSwitchBtn" type="button"></button></div>
+
+  <section id="transfer" class="hidden">
+    <div class="hint" id="modeStatus" style="display:none;text-align:center;margin-bottom:14px">
+      Sending to this phone via <b id="modeStatusWord"></b><button class="btn-ghost modeSwitch" id="modeSwitchBtn"></button>
+    </div>
+
+    <div class="drop disabled" id="drop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7 9m5-5l5 5"/><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>
+      <div class="big">Drop files here</div>
+      <div class="small">or tap to choose — any size, photos or documents</div>
+      <input type="file" id="filein" multiple class="hidden">
+    </div>
+
+    <div class="opticalPanel hidden" id="opticalBeacon">
+      <div class="beacon"><canvas id="obCanvas"></canvas></div>
+      <div class="opMeta"><span class="opLive"><i></i>Sending <b id="obName">—</b> via QR</span><span id="obCount">frame 0</span></div>
+      <p class="hint">Point the other device's camera at this screen. Keep it bright and steady — this loops until the transfer finishes.</p>
+      <button class="btn-ghost" id="obFallback" style="width:100%">Send via Wi-Fi instead</button>
+    </div>
+
+    <div class="opticalPanel hidden" id="opticalScan">
+      <div class="scanwrap"><video id="osVideo" playsinline muted autoplay></video><div class="reticle"></div></div>
+      <canvas id="osCanvas" class="hidden"></canvas>
+      <div class="opMeta"><span id="osStatus">Starting camera…</span><span id="osName"></span></div>
+      <div class="bar"><i id="osBar"></i></div>
+      <p class="hint" id="osHint">Point your camera at the other device's screen — no need to catch the beginning.</p>
+      <button class="btn-ghost" id="osFallback" style="width:100%">Use Wi-Fi instead</button>
+    </div>
+
+    <div class="xfers" id="xfers"></div>
+  </section>
+
+  <details class="net" id="net">
+    <summary>
+      <span>Network &amp; relay <span class="chev">▸</span></span>
+      <span class="tag" id="netTag">checking…</span>
+    </summary>
+    <div class="body">
+      <div class="netline" id="netSummary"><span class="k">Detecting network…</span></div>
+
+      <div>
+        <div class="seglabel">Routing</div>
+        <div class="seg" id="modeSeg">
+          <button data-mode="auto" class="on">Auto</button>
+          <button data-mode="relay">Always relay</button>
+          <button data-mode="direct">Direct only</button>
+        </div>
+        <div class="hint" style="margin-top:8px">Auto keeps transfers direct and fast on open networks, and switches to the relay by itself when it detects a restrictive (corporate) network.</div>
+      </div>
+
+      <button class="btn-ghost" id="testNet" style="justify-self:start">Run connectivity test</button>
+
+      <div class="diag hidden" id="diag">
+        <div class="title">ICE candidate test</div>
+        <div class="hint" style="margin:0 0 4px">Run this from inside the network you're worried about. A green <b style="color:var(--success)">relay</b> result means the TURN server is reachable and links will succeed here.</div>
+        <div class="cands" id="cands"></div>
+        <div class="verdict" id="verdict">Gathering…</div>
+      </div>
+    </div>
+  </details>
+
+  <footer>
+    Files travel <b>directly between the two devices</b>, encrypted by WebRTC (DTLS) — this is the browser's standard single-layer transport encryption; Beam does not add a second, application-level encryption layer on top of it. Nothing is uploaded or stored — a relay, when needed, only forwards already-encrypted packets. Relay credentials are short-lived and fetched at runtime; no secret is stored in this page.
+    <br>On iPhone: received files open in a preview — tap the <b>Share</b> icon to save to Photos or Files.
+  </footer>
+</main>
+
+<script src="/js/app.js"></script>
+</body>
+</html>
